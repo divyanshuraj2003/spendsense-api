@@ -1,0 +1,8 @@
+title,amount,category,tx_type
+Swiggy Dinner,450,Food,EXPENSE
+Hostel / Flat Rent,8500,Rent,EXPENSE
+Auto to Railway Station,180,Travel,EXPENSE
+Freelance Python Gig,15000,Income,INCOME
+Zomato Order,310,Food,EXPENSE
+WiFi Recharge,699,Utilities,EXPENSE
+Monitor Repair,4200,Electronics,EXPENSE

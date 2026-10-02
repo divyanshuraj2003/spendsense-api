@@ -1,0 +1,190 @@
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from sqlalchemy.orm import Session
+from typing import List, Optional
+import pandas as pd
+import io
+
+from database import engine, Base, get_db
+from models import User, Transaction, UserSchema, TransactionIn, TransactionOut
+from auth import hash_pwd, check_pwd, create_token, get_current_user
+
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="SpendSense API", version="1.0")
+
+
+@app.get("/")
+def health_check():
+    return {"status": "ok", "service": "SpendSense Backend running"}
+
+
+# Auth routes
+@app.post("/register", status_code=201)
+def register(user: UserSchema, db: Session = Depends(get_db)):
+    exists = db.query(User).filter(User.username == user.username).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Username is already taken")
+
+    new_user = User(
+        username=user.username,
+        hashed_password=hash_pwd(user.password)
+    )
+    db.add(new_user)
+    db.commit()
+    return {"msg": "Account created successfully"}
+
+
+@app.post("/login")
+def login(user: UserSchema, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.username == user.username).first()
+    if not db_user or not check_pwd(user.password, db_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Wrong username or password")
+
+    token = create_token(db_user.username)
+    return {"access_token": token, "token_type": "bearer"}
+
+
+# Expense & income CRUD
+@app.post("/transactions", response_model=TransactionOut, status_code=201)
+def add_transaction(
+    tx: TransactionIn,
+    db: Session = Depends(get_db),
+    curr_user: User = Depends(get_current_user)
+):
+    item = Transaction(
+        title=tx.title.strip(),
+        amount=tx.amount,
+        category=tx.category.strip().title(),
+        tx_type=tx.tx_type.upper(),
+        user_id=curr_user.id
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.get("/transactions", response_model=List[TransactionOut])
+def get_transactions(
+    category: Optional[str] = None,
+    db: Session = Depends(get_db),
+    curr_user: User = Depends(get_current_user)
+):
+    q = db.query(Transaction).filter(Transaction.user_id == curr_user.id)
+    if category:
+        q = q.filter(Transaction.category == category.strip().title())
+    
+    return q.order_by(Transaction.created_at.desc()).all()
+
+
+@app.delete("/transactions/{tx_id}")
+def remove_transaction(
+    tx_id: int,
+    db: Session = Depends(get_db),
+    curr_user: User = Depends(get_current_user)
+):
+    tx = db.query(Transaction).filter(
+        Transaction.id == tx_id,
+        Transaction.user_id == curr_user.id
+    ).first()
+
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction ID not found")
+
+    db.delete(tx)
+    db.commit()
+    return {"msg": "Deleted", "id": tx_id}
+
+
+# Bulk upload from bank/UPI csv statement
+@app.post("/transactions/import-csv")
+async def import_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    curr_user: User = Depends(get_current_user)
+):
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .csv file")
+
+    raw = await file.read()
+    df = pd.read_csv(io.BytesIO(raw))
+
+    # normalize column headers in case csv has caps or spaces
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    required = {"title", "amount", "category"}
+    if not required.issubset(set(df.columns)):
+        raise HTTPException(
+            status_code=400,
+            detail="CSV needs at least these columns: title, amount, category"
+        )
+
+    # drop broken rows where title or amount is blank
+    df = df.dropna(subset=["title", "amount"])
+    df["category"] = df["category"].fillna("Misc").astype(str).str.title()
+
+    if "tx_type" not in df.columns:
+        df["tx_type"] = "EXPENSE"
+    else:
+        df["tx_type"] = df["tx_type"].fillna("EXPENSE").astype(str).str.upper()
+
+    count = 0
+    for _, row in df.iterrows():
+        new_tx = Transaction(
+            title=str(row["title"]).strip(),
+            amount=float(row["amount"]),
+            category=row["category"],
+            tx_type=row["tx_type"],
+            user_id=curr_user.id
+        )
+        db.add(new_tx)
+        count += 1
+
+    db.commit()
+    return {"msg": "CSV imported", "rows_added": count}
+
+
+# Monthly breakdown + basic anomaly detection
+@app.get("/analytics/summary")
+def get_summary(
+    db: Session = Depends(get_db),
+    curr_user: User = Depends(get_current_user)
+):
+    rows = db.query(Transaction).filter(Transaction.user_id == curr_user.id).all()
+    if not rows:
+        return {"msg": "No transaction data available yet"}
+
+    data = [{
+        "id": r.id,
+        "title": r.title,
+        "amount": r.amount,
+        "category": r.category,
+        "tx_type": r.tx_type
+    } for r in rows]
+
+    df = pd.DataFrame(data)
+
+    exp_df = df[df["tx_type"] == "EXPENSE"]
+    inc_df = df[df["tx_type"] == "INCOME"]
+
+    total_spent = float(exp_df["amount"].sum()) if not exp_df.empty else 0.0
+    total_earned = float(inc_df["amount"].sum()) if not inc_df.empty else 0.0
+
+    by_category = {}
+    if not exp_df.empty:
+        by_category = exp_df.groupby("category")["amount"].sum().round(2).to_dict()
+
+    # flag unusual spending (anything over 2x the user's average expense)
+    unusual_txs = []
+    if len(exp_df) >= 3:
+        avg_spend = exp_df["amount"].mean()
+        flagged = exp_df[exp_df["amount"] > (avg_spend * 2)]
+        unusual_txs = flagged[["id", "title", "amount", "category"]].to_dict(orient="records")
+
+    return {
+        "total_income": round(total_earned, 2),
+        "total_expense": round(total_spent, 2),
+        "net_balance": round(total_earned - total_spent, 2),
+        "category_wise_spend": by_category,
+        "unusual_expenses": unusual_txs
+    }
