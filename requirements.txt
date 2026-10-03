@@ -1,7 +1,2 @@
-﻿fastapi
+fastapi
 uvicorn
-sqlalchemy
-pandas
-pyjwt
-bcrypt
-python-multipart
