@@ -1,6 +1,8 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
+from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 from database import Base
 
 class User(Base):
@@ -24,3 +26,13 @@ class Transaction(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
 
     owner = relationship("User", back_populates="transactions")
+
+class UserSchema(BaseModel):
+    username: str
+    password: str
+
+class TransactionIn(BaseModel):
+    title: str
+    amount: float
+    category: str
+    tx_type: Optional[str] = "EXPENSE"
