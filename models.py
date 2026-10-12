@@ -36,3 +36,10 @@ class TransactionIn(BaseModel):
     amount: float
     category: str
     tx_type: Optional[str] = "EXPENSE"
+
+class TransactionOut(TransactionIn):
+    id: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
