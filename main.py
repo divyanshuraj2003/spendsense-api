@@ -1,8 +1,8 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import engine, Base, get_db
-from models import User, UserSchema
-from auth import hash_pwd, check_pwd, create_token
+from models import User, Transaction, UserSchema, TransactionIn, TransactionOut
+from auth import hash_pwd, check_pwd, create_token, get_current_user
 
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="SpendSense API", version="1.0")
@@ -26,3 +26,17 @@ def login(user: UserSchema, db: Session = Depends(get_db)):
     if not db_user or not check_pwd(user.password, db_user.hashed_password):
         raise HTTPException(status_code=401, detail="Wrong credentials")
     return {"access_token": create_token(db_user.username), "token_type": "bearer"}
+
+@app.post("/transactions", response_model=TransactionOut, status_code=201)
+def add_transaction(tx: TransactionIn, db: Session = Depends(get_db), curr_user: User = Depends(get_current_user)):
+    item = Transaction(
+        title=tx.title.strip(),
+        amount=tx.amount,
+        category=tx.category.strip().title(),
+        tx_type=tx.tx_type.upper(),
+        user_id=curr_user.id
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
