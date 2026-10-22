@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
+from typing import List
 from database import engine, Base, get_db
 from models import User, Transaction, UserSchema, TransactionIn, TransactionOut
 from auth import hash_pwd, check_pwd, create_token, get_current_user
@@ -40,3 +41,7 @@ def add_transaction(tx: TransactionIn, db: Session = Depends(get_db), curr_user:
     db.commit()
     db.refresh(item)
     return item
+
+@app.get("/transactions", response_model=List[TransactionOut])
+def get_transactions(db: Session = Depends(get_db), curr_user: User = Depends(get_current_user)):
+    return db.query(Transaction).filter(Transaction.user_id == curr_user.id).order_by(Transaction.created_at.desc()).all()
