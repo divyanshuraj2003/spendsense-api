@@ -48,3 +48,12 @@ def get_transactions(category: Optional[str] = None, db: Session = Depends(get_d
     if category:
         q = q.filter(Transaction.category == category.strip().title())
     return q.order_by(Transaction.created_at.desc()).all()
+
+@app.delete("/transactions/{tx_id}")
+def remove_transaction(tx_id: int, db: Session = Depends(get_db), curr_user: User = Depends(get_current_user)):
+    tx = db.query(Transaction).filter(Transaction.id == tx_id, Transaction.user_id == curr_user.id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    db.delete(tx)
+    db.commit()
+    return {"msg": "Deleted", "id": tx_id}
