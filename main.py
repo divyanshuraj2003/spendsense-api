@@ -84,3 +84,26 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_db)
         count += 1
     db.commit()
     return {"msg": "CSV imported", "rows_added": count}
+
+@app.get("/analytics/summary")
+def get_summary(db: Session = Depends(get_db), curr_user: User = Depends(get_current_user)):
+    rows = db.query(Transaction).filter(Transaction.user_id == curr_user.id).all()
+    if not rows:
+        return {"msg": "No transaction data available yet"}
+
+    df = pd.DataFrame([{
+        "id": r.id, "title": r.title, "amount": r.amount, "category": r.category, "tx_type": r.tx_type
+    } for r in rows])
+
+    exp_df = df[df["tx_type"] == "EXPENSE"]
+    inc_df = df[df["tx_type"] == "INCOME"]
+    total_spent = float(exp_df["amount"].sum()) if not exp_df.empty else 0.0
+    total_earned = float(inc_df["amount"].sum()) if not inc_df.empty else 0.0
+    by_category = exp_df.groupby("category")["amount"].sum().round(2).to_dict() if not exp_df.empty else {}
+
+    return {
+        "total_income": round(total_earned, 2),
+        "total_expense": round(total_spent, 2),
+        "net_balance": round(total_earned - total_spent, 2),
+        "category_wise_spend": by_category
+    }
