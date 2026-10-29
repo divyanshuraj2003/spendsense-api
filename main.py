@@ -101,9 +101,16 @@ def get_summary(db: Session = Depends(get_db), curr_user: User = Depends(get_cur
     total_earned = float(inc_df["amount"].sum()) if not inc_df.empty else 0.0
     by_category = exp_df.groupby("category")["amount"].sum().round(2).to_dict() if not exp_df.empty else {}
 
+    unusual_txs = []
+    if len(exp_df) >= 3:
+        avg_spend = exp_df["amount"].mean()
+        flagged = exp_df[exp_df["amount"] > (avg_spend * 2)]
+        unusual_txs = flagged[["id", "title", "amount", "category"]].to_dict(orient="records")
+
     return {
         "total_income": round(total_earned, 2),
         "total_expense": round(total_spent, 2),
         "net_balance": round(total_earned - total_spent, 2),
-        "category_wise_spend": by_category
+        "category_wise_spend": by_category,
+        "unusual_expenses": unusual_txs
     }
