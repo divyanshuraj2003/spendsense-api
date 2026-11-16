@@ -7,16 +7,11 @@ from auth import hash_pwd, check_pwd
 # Initialize database tables
 Base.metadata.create_all(bind=engine)
 
-st.set_page_config(page_title="SpendSense - Expense Tracker", layout="wide")
-
-# Hide Streamlit developer toolbar & footer for a clean hosted look
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    [data-testid="stToolbar"] {visibility: hidden;}
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(
+    page_title="SpendSense - Expense Tracker",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 if "user_id" not in st.session_state:
     st.session_state.user_id = None
@@ -74,7 +69,7 @@ else:
 
     st.divider()
 
-    # Left sidebar for adding transactions or uploading CSV
+    # Left sidebar for adding transactions, uploading CSV, or clearing data
     with st.sidebar:
         st.header("Add Transaction")
         with st.form("add_tx_form", clear_on_submit=True):
@@ -120,6 +115,15 @@ else:
                 st.rerun()
             else:
                 st.error("CSV missing required columns: title, amount, category")
+
+        st.divider()
+        st.header("Manage Data")
+        if st.button("Clear All My Transactions", type="secondary"):
+            db.query(Transaction).filter(
+                Transaction.user_id == st.session_state.user_id
+            ).delete()
+            db.commit()
+            st.rerun()
 
     # Fetch user transactions
     rows = db.query(Transaction).filter(
