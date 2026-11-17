@@ -181,7 +181,48 @@ else:
                 st.caption("Add at least 3 expenses to activate anomaly detection.")
 
         st.divider()
+
+        # Category Filter + Transactions Table
         st.subheader("Recent Transactions")
-        st.dataframe(df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+        filter_cat = st.selectbox("Filter by Category", ["All"] + sorted(df["Category"].unique().tolist()))
+        display_df = df if filter_cat == "All" else df[df["Category"] == filter_cat]
+        st.dataframe(display_df.drop(columns=["ID"]), use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # Edit or Delete Individual Entry
+        st.subheader("Edit or Delete a Transaction")
+        tx_options = {
+            f"{r.title} — ₹{r.amount:,.2f} ({r.category}) [{r.tx_type}] (#{r.id})": r
+            for r in rows
+        }
+        selected_label = st.selectbox("Select Transaction", list(tx_options.keys()))
+        selected_tx = tx_options[selected_label]
+
+        with st.form("edit_tx_form"):
+            new_title = st.text_input("Title", value=selected_tx.title)
+            new_amount = st.number_input("Amount", min_value=1.0, value=float(selected_tx.amount), step=10.0)
+            categories = ["Food", "Rent", "Travel", "Utilities", "Electronics", "Income", "Misc"]
+            cat_idx = categories.index(selected_tx.category) if selected_tx.category in categories else 6
+            new_category = st.selectbox("Category", categories, index=cat_idx)
+            type_idx = 1 if selected_tx.tx_type == "INCOME" else 0
+            new_type = st.radio("Type", ["EXPENSE", "INCOME"], index=type_idx, horizontal=True)
+
+            col_save, col_del = st.columns(2)
+            with col_save:
+                if st.form_submit_button("Update Entry"):
+                    if new_title.strip():
+                        selected_tx.title = new_title.strip()
+                        selected_tx.amount = float(new_amount)
+                        selected_tx.category = new_category
+                        selected_tx.tx_type = new_type
+                        db.commit()
+                        st.success("Updated!")
+                        st.rerun()
+            with col_del:
+                if st.form_submit_button("Delete Entry"):
+                    db.delete(selected_tx)
+                    db.commit()
+                    st.rerun()
 
 db.close()
